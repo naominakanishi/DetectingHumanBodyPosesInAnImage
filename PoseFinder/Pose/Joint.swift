@@ -52,6 +52,8 @@ class Joint {
 
     /// A boolean value that indicates if the joint satisfies the joint threshold defined in the configuration.
     var isValid: Bool
+    
+    var zPosition: Float?
 
     init(name: Name,
          cell: PoseNetOutput.Cell = .zero,

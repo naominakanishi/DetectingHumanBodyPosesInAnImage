@@ -7,6 +7,7 @@ The implementation of a single-person pose estimation algorithm, based on the Te
 */
 
 import CoreGraphics
+import VideoToolbox
 
 extension PoseBuilder {
     /// Returns a pose constructed using the outputs from the PoseNet model.
@@ -27,6 +28,7 @@ extension PoseBuilder {
         // Map the pose joints positions back onto the original image.
         pose.joints.values.forEach { joint in
             joint.position = joint.position.applying(modelToInputTransformation)
+            joint.zPosition = calculateDepth(forJointAt: joint.position)
         }
 
         return pose
@@ -54,11 +56,30 @@ extension PoseBuilder {
                 }
             }
         }
+        
 
         // Update joint.
         joint.cell = bestCell
         joint.position = output.position(for: joint.name, at: joint.cell)
         joint.confidence = bestConfidence
         joint.isValid = joint.confidence >= configuration.jointConfidenceThreshold
+        joint.zPosition = calculateDepth(forJointAt: joint.position)
+    }
+}
+
+extension PoseBuilder {
+    func calculateDepth(forJointAt point: CGPoint) -> Float {
+        let depthDataMap = depthData.depthDataMap
+        
+        CVPixelBufferLockBaseAddress(depthDataMap, .readOnly)
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(depthDataMap)
+        let baseAddress = CVPixelBufferGetBaseAddress(depthDataMap)!
+        assert(kCVPixelFormatType_DepthFloat32 == CVPixelBufferGetPixelFormatType(depthDataMap))
+
+        let rowData = baseAddress + Int(point.y) * bytesPerRow
+        let distance = rowData.assumingMemoryBound(to: Float32.self)[Int(point.x)]
+
+        CVPixelBufferUnlockBaseAddress(depthDataMap, .readOnly)
+        return distance
     }
 }

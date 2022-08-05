@@ -12,7 +12,7 @@ import UIKit
 import VideoToolbox
 
 protocol VideoCaptureDelegate: AnyObject {
-    func videoCapture(_ videoCapture: VideoCapture, didCaptureFrame image: CGImage?)
+    func videoCapture(_ videoCapture: VideoCapture, didCaptureFrame image: CGImage?, withDepthData depthData: AVDepthData)
 }
 
 /// - Tag: VideoCapture
@@ -33,39 +33,12 @@ class VideoCapture: NSObject {
     /// A capture output that records video and provides access to video frames. Captured frames are passed to the
     /// delegate via the `captureOutput()` method.
     let videoOutput = AVCaptureVideoDataOutput()
-
-    /// The current camera's position.
-    private(set) var cameraPostion = AVCaptureDevice.Position.back
+    
+    private let depthDataOutput = AVCaptureDepthDataOutput()
+    private var outputSynchronizer: AVCaptureDataOutputSynchronizer?
 
     /// The dispatch queue responsible for processing camera set up and frame capture.
-    private let sessionQueue = DispatchQueue(
-        label: "com.example.apple-samplecode.estimating-human-pose-with-posenet.sessionqueue")
-
-    /// Toggles between the front and back camera.
-    public func flipCamera(completion: @escaping (Error?) -> Void) {
-        sessionQueue.async {
-            do {
-                self.cameraPostion = self.cameraPostion == .back ? .front : .back
-
-                // Indicate the start of a set of configuration changes to the capture session.
-                self.captureSession.beginConfiguration()
-
-                try self.setCaptureSessionInput()
-                try self.setCaptureSessionOutput()
-
-                // Commit configuration changes.
-                self.captureSession.commitConfiguration()
-
-                DispatchQueue.main.async {
-                    completion(nil)
-                }
-            } catch {
-                DispatchQueue.main.async {
-                    completion(error)
-                }
-            }
-        }
-    }
+    private let sessionQueue = DispatchQueue(label: "com.example.apple-samplecode.estimating-human-pose-with-posenet.sessionqueue")
 
     /// Asynchronously sets up the capture session.
     ///
@@ -94,23 +67,27 @@ class VideoCapture: NSObject {
         captureSession.beginConfiguration()
 
         captureSession.sessionPreset = .vga640x480
-
-        try setCaptureSessionInput()
+        
+        let device = AVCaptureDevice.default(
+            .builtInTrueDepthCamera,
+            for: AVMediaType.video,
+            position: .front
+        )
+        
+        try setCaptureSessionInput(device)
 
         try setCaptureSessionOutput()
+        
+        try setTrueDepthOutput(device)
+        
+        setOutputSynchronizer()
 
-        captureSession.commitConfiguration()
     }
 
-    private func setCaptureSessionInput() throws {
+    private func setCaptureSessionInput(_ captureDevice: AVCaptureDevice?) throws {
         // Use the default capture device to obtain access to the physical device
         // and associated properties.
-        guard let captureDevice = AVCaptureDevice.default(
-            .builtInWideAngleCamera,
-            for: AVMediaType.video,
-            position: cameraPostion) else {
-                throw VideoCaptureError.invalidInput
-        }
+        guard let captureDevice = captureDevice else { throw VideoCaptureError.invalidInput }
 
         // Remove any existing inputs.
         captureSession.inputs.forEach { input in
@@ -135,6 +112,7 @@ class VideoCapture: NSObject {
         captureSession.outputs.forEach { output in
             captureSession.removeOutput(output)
         }
+        
 
         // Set the pixel type.
         let settings: [String: Any] = [
@@ -147,8 +125,6 @@ class VideoCapture: NSObject {
         // an older frame.
         videoOutput.alwaysDiscardsLateVideoFrames = true
 
-        videoOutput.setSampleBufferDelegate(self, queue: sessionQueue)
-
         guard captureSession.canAddOutput(videoOutput) else {
             throw VideoCaptureError.invalidOutput
         }
@@ -160,7 +136,7 @@ class VideoCapture: NSObject {
             connection.isVideoOrientationSupported {
             connection.videoOrientation =
                 AVCaptureVideoOrientation(deviceOrientation: UIDevice.current.orientation)
-            connection.isVideoMirrored = cameraPostion == .front
+            connection.isVideoMirrored = true
 
             // Inverse the landscape orientation to force the image in the upward
             // orientation.
@@ -170,6 +146,38 @@ class VideoCapture: NSObject {
                 connection.videoOrientation = .landscapeLeft
             }
         }
+    }
+    
+    private func setTrueDepthOutput(_ device: AVCaptureDevice?) throws {
+        
+        guard let videoDevice = device else { throw VideoCaptureError.invalidInput }
+        
+        captureSession.addOutput(depthDataOutput)
+        depthDataOutput.isFilteringEnabled = false
+        if let connection = depthDataOutput.connection(with: .depthData) {
+            connection.isEnabled = true
+        } else {
+            print("No AVCaptureConnection")
+        }
+        
+        let depthFormats = videoDevice.activeFormat.supportedDepthDataFormats
+        let filtered = depthFormats.filter({
+            CMFormatDescriptionGetMediaSubType($0.formatDescription) == kCVPixelFormatType_DepthFloat32
+        })
+        let selectedFormat = filtered.max(by: {
+            first, second in CMVideoFormatDescriptionGetDimensions(first.formatDescription).width < CMVideoFormatDescriptionGetDimensions(second.formatDescription).width
+        })
+        
+        try videoDevice.lockForConfiguration()
+        videoDevice.activeDepthDataFormat = selectedFormat
+        videoDevice.unlockForConfiguration()
+        captureSession.commitConfiguration()
+    }
+    
+    private func setOutputSynchronizer() {
+        outputSynchronizer = AVCaptureDataOutputSynchronizer(dataOutputs: [videoOutput, depthDataOutput])
+        outputSynchronizer!.setDelegate(self, queue: sessionQueue)
+        captureSession.commitConfiguration()
     }
 
     /// Begin capturing frames.
@@ -217,32 +225,39 @@ class VideoCapture: NSObject {
 
 // MARK: - AVCaptureVideoDataOutputSampleBufferDelegate
 
-extension VideoCapture: AVCaptureVideoDataOutputSampleBufferDelegate {
-
-    public func captureOutput(_ output: AVCaptureOutput,
-                              didOutput sampleBuffer: CMSampleBuffer,
-                              from connection: AVCaptureConnection) {
-        guard let delegate = delegate else { return }
-
-        if let pixelBuffer = sampleBuffer.imageBuffer {
-            // Attempt to lock the image buffer to gain access to its memory.
-            guard CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly) == kCVReturnSuccess
-                else {
-                    return
-            }
-
+extension VideoCapture: AVCaptureDataOutputSynchronizerDelegate {
+    func dataOutputSynchronizer(
+        _ synchronizer: AVCaptureDataOutputSynchronizer,
+        didOutput synchronizedDataCollection: AVCaptureSynchronizedDataCollection
+    ) {
+        guard let frameData = synchronizedDataCollection[videoOutput] as? AVCaptureSynchronizedSampleBufferData,
+              let depthData = synchronizedDataCollection[depthDataOutput] as? AVCaptureSynchronizedDepthData,
+              !depthData.depthDataWasDropped,
+              !frameData.sampleBufferWasDropped // TODO handle dropping!
+        else { return }
+        didReceiveSampleBuffer(frameData.sampleBuffer, depthData: depthData.depthData)
+    }
+    
+    
+    private func didReceiveSampleBuffer (
+        _ sampleBuffer: CMSampleBuffer,
+        depthData: AVDepthData
+    ) {
+        guard let delegate = delegate,
+              let pixelBuffer = sampleBuffer.imageBuffer,
+              CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly) == kCVReturnSuccess
+        else { return }
             // Create Core Graphics image placeholder.
-            var image: CGImage?
+        var image: CGImage?
 
-            // Create a Core Graphics bitmap image from the pixel buffer.
-            VTCreateCGImageFromCVPixelBuffer(pixelBuffer, options: nil, imageOut: &image)
+        // Create a Core Graphics bitmap image from the pixel buffer.
+        VTCreateCGImageFromCVPixelBuffer(pixelBuffer, options: nil, imageOut: &image)
 
-            // Release the image buffer.
-            CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly)
+        // Release the image buffer.
+        CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly)
 
-            DispatchQueue.main.sync {
-                delegate.videoCapture(self, didCaptureFrame: image)
-            }
+        DispatchQueue.main.sync {
+            delegate.videoCapture(self, didCaptureFrame: image, withDepthData: depthData)
         }
     }
 }

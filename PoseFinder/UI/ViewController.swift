@@ -71,11 +71,7 @@ class ViewController: UIViewController {
     }
 
     @IBAction func onCameraButtonTapped(_ sender: Any) {
-        videoCapture.flipCamera { error in
-            if let error = error {
-                print("Failed to flip camera with error \(error)")
-            }
-        }
+
     }
 
     @IBAction func onAlgorithmSegmentValueChanged(_ sender: UISegmentedControl) {
@@ -128,23 +124,31 @@ extension ViewController: ConfigurationViewControllerDelegate {
 // MARK: - VideoCaptureDelegate
 
 extension ViewController: VideoCaptureDelegate {
-    func videoCapture(_ videoCapture: VideoCapture, didCaptureFrame capturedImage: CGImage?) {
-        guard currentFrame == nil else {
-            return
-        }
+    func videoCapture(
+        _ videoCapture: VideoCapture,
+        didCaptureFrame capturedImage: CGImage?,
+        withDepthData depthData: AVDepthData
+    ) {
+        guard currentFrame == nil
+        else { return }
+        
         guard let image = capturedImage else {
             fatalError("Captured image is null")
         }
 
         currentFrame = image
-        poseNet.predict(image)
+        poseNet.predict(image, withDepthData: depthData)
     }
 }
 
 // MARK: - PoseNetDelegate
 
 extension ViewController: PoseNetDelegate {
-    func poseNet(_ poseNet: PoseNet, didPredict predictions: PoseNetOutput) {
+    func poseNet(
+        _ poseNet: PoseNet,
+        didPredict predictions: PoseNetOutput,
+        withDepthData depthData: AVDepthData
+    ) {
         defer {
             // Release `currentFrame` when exiting this method.
             self.currentFrame = nil
@@ -154,10 +158,13 @@ extension ViewController: PoseNetDelegate {
             return
         }
 
-        let poseBuilder = PoseBuilder(output: predictions,
-                                      configuration: poseBuilderConfiguration,
-                                      inputImage: currentFrame)
-
+        let poseBuilder = PoseBuilder(
+            output: predictions,
+            configuration: poseBuilderConfiguration,
+            inputImage: currentFrame,
+            depthData: depthData
+        )
+        
         let poses = algorithm == .single
             ? [poseBuilder.pose]
             : poseBuilder.poses

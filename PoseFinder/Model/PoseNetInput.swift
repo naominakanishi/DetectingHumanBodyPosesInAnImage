@@ -17,13 +17,7 @@ class PoseNetInput: MLFeatureProvider {
     /// `PoseNetMobileNet075S16FP16.mlmodel` in the Project Navigator.
     private static let imageFeatureName = "image"
 
-    /// The original image this feature provider uses as input to its consumers.
     var imageFeature: CGImage
-
-    /// The size of the images this feature provider produces to its consumers.
-    ///
-    /// The feature provider resizes the `imageFeature` property by
-    /// cropping and resizing it to this size in the `featureValue(for:)` method.
     let imageFeatureSize: CGSize
 
     var featureNames: Set<String> {

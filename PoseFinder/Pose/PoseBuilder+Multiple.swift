@@ -48,6 +48,7 @@ extension PoseBuilder {
         detectedPoses.forEach { pose in
             pose.joints.values.forEach { joint in
                 joint.position = joint.position.applying(modelToInputTransformation)
+                joint.zPosition = calculateDepth(forJointAt: joint.position)
             }
         }
 

@@ -79,8 +79,13 @@ class PoseImageView: UIImageView {
                 }
 
                 // Draw the joints as circles above the segment lines.
+                let max = pose.joints
+                    .compactMap { $0.value.zPosition }
+                    .filter { !$0.isNaN }
+                    .max()!
                 for joint in pose.joints.values.filter({ $0.isValid }) {
-                    draw(circle: joint, in: rendererContext.cgContext)
+                    let color = UIColor(hue: CGFloat((joint.zPosition ?? .zero) / max), saturation: 1, brightness: 1, alpha: 1)
+                    draw(circle: joint, in: rendererContext.cgContext, withColor: color.cgColor)
                 }
             }
         }
@@ -126,8 +131,8 @@ class PoseImageView: UIImageView {
     /// - parameters:
     ///     - circle: A valid joint whose position is used as the circle's center.
     ///     - cgContext: The rendering context.
-    private func draw(circle joint: Joint, in cgContext: CGContext) {
-        cgContext.setFillColor(jointColor.cgColor)
+    private func draw(circle joint: Joint, in cgContext: CGContext, withColor color: CGColor) {
+        cgContext.setFillColor(color)
 
         let rectangle = CGRect(x: joint.position.x - jointRadius, y: joint.position.y - jointRadius,
                                width: jointRadius * 2, height: jointRadius * 2)

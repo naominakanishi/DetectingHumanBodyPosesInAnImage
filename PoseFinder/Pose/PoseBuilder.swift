@@ -7,6 +7,7 @@ The implementation of a structure that analyzes the PoseNet model outputs to det
 */
 
 import CoreGraphics
+import AVFoundation
 
 struct PoseBuilder {
     /// A prediction from the PoseNet model.
@@ -16,13 +17,20 @@ struct PoseBuilder {
 
     /// A transformation matrix used to map joints from the PoseNet model's input image size onto the original image size.
     let modelToInputTransformation: CGAffineTransform
+    let depthData: AVDepthData
 
     /// The parameters the Pose Builder uses in its pose algorithms.
     var configuration: PoseBuilderConfiguration
 
-    init(output: PoseNetOutput, configuration: PoseBuilderConfiguration, inputImage: CGImage) {
+    init(
+        output: PoseNetOutput,
+        configuration: PoseBuilderConfiguration,
+        inputImage: CGImage,
+        depthData: AVDepthData
+    ) {
         self.output = output
         self.configuration = configuration
+        self.depthData = depthData
 
         // Create a transformation matrix to transform joint positions back into the space
         // of the original input size.

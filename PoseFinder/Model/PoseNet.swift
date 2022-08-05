@@ -8,9 +8,10 @@ Implementation details of a facade to interact with the PoseNet model, includes 
 
 import CoreML
 import Vision
+import AVFoundation
 
 protocol PoseNetDelegate: AnyObject {
-    func poseNet(_ poseNet: PoseNet, didPredict predictions: PoseNetOutput)
+    func poseNet(_ poseNet: PoseNet, didPredict predictions: PoseNetOutput, withDepthData depthData: AVDepthData)
 }
 
 class PoseNet {
@@ -48,7 +49,10 @@ class PoseNet {
     ///
     /// - parameters:
     ///     - image: Image passed by the PoseNet model.
-    func predict(_ image: CGImage) {
+    func predict(
+        _ image: CGImage,
+        withDepthData depthData: AVDepthData
+    ) {
         DispatchQueue.global(qos: .userInitiated).async {
             // Wrap the image in an instance of PoseNetInput to have it resized
             // before being passed to the PoseNet model.
@@ -63,7 +67,7 @@ class PoseNet {
                                               modelOutputStride: self.outputStride)
 
             DispatchQueue.main.async {
-                self.delegate?.poseNet(self, didPredict: poseNetOutput)
+                self.delegate?.poseNet(self, didPredict: poseNetOutput, withDepthData: depthData)
             }
         }
     }
